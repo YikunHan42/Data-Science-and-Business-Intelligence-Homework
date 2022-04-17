@@ -1,0 +1,251 @@
+---
+title: "Homework1"
+author: "YikunHan42"
+output: 
+  html_document
+date: '2022-04-04'
+---
+# homework1_part1
+
+## Importing libraries
+
+```{r}
+library(tidyverse)
+library(stringr)
+```
+
+## Reading files & Setting variables
+
+```{r}
+data <- read.csv("D://Study/DSBI/Task1/test_id_card_no.csv")
+sex =c()
+Birthday =c()
+Valid = c()
+Age = c()
+Zone_code = c()
+```
+
+## 1
+
+### (1)
+
+```{r}
+data %>% filter(str_detect(Id_Card_No,pattern = "^22"))
+```
+
+
+### (2)(3)
+```{r}
+#flag变量，看是否存在不通过校验码
+count = 0
+#循环处理
+for(i in 1:nrow(data)){
+#校验码
+  newdata<-data[c(i),2]
+  a = substring(newdata, 1:18,1:18)
+
+  if( a[18] == 'X'){a[18]=10}
+    sum_ = 0
+    for(j in 1:17){
+    sum_ = sum_ +  as.numeric(a[j]) * (2**(18-j) %% 11)
+    }
+    a1 = ((sum_ %% 11) + as.numeric(a[18]))%%11- 1
+  if(a[18]=="10"){a[18]='X'}
+  
+  if(a1 != 0){
+    Valid = append(Valid,0)
+    count = count + 1
+  print("效验码不对的：")
+  print(paste(a, sep = "",collapse=""))}
+  if(a1 == 0){
+      Valid = append(Valid,1)
+  }
+#50岁  
+  byear <- c(paste(a[7:10], sep = "",collapse=""))
+  bmonth <- c(paste(a[11:12], sep = "",collapse=""))
+  bday <- c(paste(a[13:14], sep = "",collapse=""))
+  b <- paste(byear,bmonth,bday, sep = "-")
+  today <- Sys.Date()
+  gtd <- as.Date(b) 
+  differencetime = difftime(today, gtd, units="days")
+  if(differencetime>(365*38+366*12)){
+    print("年龄大于50：")
+    print(paste(a, sep = "",collapse=""))}
+#增添变量
+  Birthday<-append(x=Birthday,as.Date(b))
+  Age<-append(Age,2022-as.numeric(byear))
+  Zone_code = append(Zone_code,c(paste(a[1:2], sep = "",collapse="")))
+  #记录性别
+  if (as.numeric(a[17])%%2==1){
+    sex = append(sex,"Male")
+  }
+  else{
+    sex = append(sex,'Female')
+  }
+}
+
+if(count == 0) print("全部通过校验")
+```
+## 2
+
+### (1)
+```{r}
+data <- data %>% mutate(Birthday)
+data %>% arrange(Birthday) 
+```
+
+### (2)
+```{r}
+sex = as.factor(sex)
+data <- data %>% mutate(sex)
+data %>% arrange(sex,desc(Birthday)) 
+```
+## 3
+```{r}
+Valid = as.logical(Valid)
+data <- data %>% mutate(Valid)
+data
+```
+
+## 4
+### (1)
+```{r}
+data <- data %>% mutate(Age)
+data %>% filter(Valid=TRUE) %>% summarise(mean(Age))
+data %>% filter(Valid=TRUE) %>% summarise(median(Age))
+```
+
+### (2)
+```{r}
+data %>% filter(Valid=TRUE) %>% summarise(n())
+```
+
+### (3)
+```{r}
+data %>% filter(Valid=TRUE) %>% summarise(any(Age<30)) 
+```
+
+## 5
+
+### (1)
+```{r}
+data  %>% filter(Valid=TRUE) %>% group_by(sex) %>% summarise(n(),mean(Age))
+```
+
+### (2)
+```{r}
+data  %>% filter(Valid=TRUE) %>% group_by(sex) %>% summarise(n50=sum(Age>50),n_per=mean(Age>50)) 
+```
+
+## 6
+
+### (1)
+```{r}
+data  %>% filter(Valid=TRUE)  %>% filter(Age<=65) %>% filter(!str_detect(Id_Card_No,pattern = "^220101")) %>% arrange(desc(Age))
+newdata <- data[,c(2,3,4,5)]
+write.csv(newdata,file = 'Out_Id_Card_Data.csv')
+```
+
+### (2)
+
+```{r}
+data = data %>% mutate(Zone_code)
+data %>% filter(Valid=TRUE) %>% group_by(Zone_code,sex) %>% summarise(n_old=sum(Age>=60),n_old_per=mean(Age>=60),n_not_old=sum(Age<60),n_not_old_per=mean(Age<60))
+```
+
+
+# homework1_part2
+
+## Importing libraries
+
+```{r}
+library(tidyverse)
+library(Hmisc)
+library(dplyr)
+library(plyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+```
+
+## (1) Importing the file 读入数据
+
+```{r}
+## Sys.setlocale(category="LC_ALL",locale="en_US.UTF-8")
+data <- read_csv('D://Study/DSBI/Task1/pharmacy_data.csv')
+data %>% as_tibble() ->data
+```
+
+## (2) Summary view 数据集概况
+```{r}
+summary(data)
+```
+
+## (3) Renaming date & change the data type 重命名列名&改数据类型
+```{r}
+data <- rename(data,c("日期"="销售日"))
+data$销售日 <- ymd(data$销售日)
+
+data
+```
+
+## (4) Deleting rows of missing data 删除缺失数据行
+```{r}
+data <- data[complete.cases(data[,1:2]),]
+```
+
+## (5) Adding mean 插值填补
+```{r}
+data <- data %>% group_by(品名)
+data$数量[is.na(data$数量)] <- mean(data$数量,na.rm=TRUE)
+```
+
+## (6) Excluding rows 数量为负的行排除
+```{r}
+data <- data %>% filter(数量>0)
+```
+
+## (7) Descending order 降序排列
+```{r}
+data %>% arrange(desc(销售日))
+```
+
+## (8) Adding line 增加新列
+```{r}
+data <- data %>% mutate(折扣率= (金额-折扣金额)/金额)
+data
+```
+
+## (9) Statistic about sale 统计总实际销售额、总销售单数
+```{R}
+data %>% summarise(n_sale=sum(折扣金额), n_num=sum(数量))
+```
+
+## (10) Statistic by commodity 统计各种商品的指标
+```{R}
+data %>% group_by(品名) %>% dplyr::summarise(n_num=n(),n_sale=sum(金额),n_average=sum(金额)/sum(数量))
+```
+
+## (11) Statistic by month 按月统计
+```{r}
+data %>% 
+  mutate(年=year(销售日)) %>% 
+  mutate(月=month(销售日)) %>% 
+  mutate(年_月=str_c(年,月,sep = "-")) -> data
+data %>% 
+  group_by(年_月) %>% 
+  dplyr::summarise(
+    销售单数 = sum(数量),
+    总销售额 = sum(金额),
+    平均价格 = mean(金额)) 
+```
+
+## (12) Statistic by customer 统计每位顾客每月的实际消费金额
+```{R}
+data %>% 
+  mutate(顾客_月=str_c(顾客编号,年_月,sep = "-"))-> data
+data %>% 
+  group_by(顾客_月) %>% 
+  dplyr::summarise(
+    总消费额=sum(折扣金额))
+```
