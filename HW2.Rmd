@@ -1,0 +1,228 @@
+---
+title: "Homework2"
+author: "韩颐堃"
+output: pdf_document
+date: '2022-04-17'
+---
+# homework2
+
+## 导入第三方库
+
+```{r}
+library(nycflights13)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(openair)
+library(GGally)
+library(psych)
+options (warn = -1)
+dim(flights)
+```
+## 数据概览
+
+```{r}
+flights
+```
+
+## 1. 箱线图和小提琴图
+### (1) air_time箱线图+小提琴图
+
+```{r}
+p <- ggplot(data = flights, mapping = aes(x = 0, y = air_time), fill = attributes)
+p + geom_boxplot(width = 1,position = position_dodge(0.9), color = " green") + geom_violin(size = 0.01,alpha = 0.5,color = "blue") + labs(title = "叠加图", x= "width") + theme(plot.title=element_text(hjust=0.5), panel.background = element_rect(fill = "#FFBC1717"))
+```
+
+### (2) 季度飞行时间箱线图对比
+```{r}
+flights <- flights %>%
+    mutate(season = ceiling((month)/3))
+seasonalplot <- ggplot(data = flights, mapping = aes(x = as.factor(season), y = air_time), fill = Attribute)
+seasonalplot + geom_boxplot(width = 0.5, position = position_dodge(0.9), color = "skyblue") + labs(title = "季度对比图", x= "season") + theme(plot.title=element_text(hjust=0.5),panel.background = element_rect(fill = "#FFBC1717"))
+```
+
+### (3) 月度横置飞行时间箱线图对比
+```{r}
+monthlyplot <- ggplot(data = flights, mapping = aes(x = as.factor(month), y = air_time), fill = Attribute)
+monthlyplot + geom_boxplot(width = 0.5, position = position_dodge(0.9), color = "skyblue") + labs(title = "月度对比图", x = "month") + theme(plot.title = element_text(hjust = 0.5),panel.background = element_rect(fill = "#FFBC1717")) + coord_flip()
+```
+## 2
+
+### (1) 距离直方图 + 核密度估计曲线
+```{r}
+p <- ggplot(data = flights, mapping= aes(x = distance))
+p + geom_histogram(aes(y = ..density..), fill="lightskyblue", color="black") + geom_density(color="orange") + theme(plot.title = element_text(hjust = 0.5), panel.background = element_rect(fill = "#FFBC1717")) + labs(title = "距离堆叠图")
+```
+
+### (2) 公司核密度估计曲线对比
+#### 前三的公司
+```{r}
+carrierrank = flights %>% group_by(carrier) %>% summarise(ave = mean(distance)) %>% arrange(desc(ave))
+carrierrank[1:3,]
+```
+#### 曲线绘制
+```{r}
+top3carrier = flights %>% filter(carrier=='HA'|carrier=='AS'|carrier=='VX')
+p <- ggplot(data = top3carrier,mapping = aes(x = distance, color = factor(carrier),linetype = factor(carrier)))
+p + geom_density(adjust = 1,size = 1) +  theme(panel.background = element_rect(fill = "#FFBC1717"))
+```
+
+## 3
+### (1) 条形图
+```{r}
+distancebycarrier1 = flights %>% group_by(carrier) %>% summarise(ave = mean(distance)) %>% arrange(desc(ave))
+p <- ggplot(data = distancebycarrier1, mapping = aes(x = factor(carrier, levels = distancebycarrier1$carrier), y = ave, fill="lightskyblue", color = factor(carrier)))
+p + geom_col(stat="identity") + theme(plot.title = element_text(hjust = 0.5), panel.background = element_rect(fill = "#FFBC1717")) + labs(title = "航空公司平均距离图")
+```
+
+### (2) 堆叠柱状图
+```{r}
+flights %>% group_by(carrier) %>% summarise(sum = sum(distance)) %>% arrange(desc(sum)) -> distancebycarrier2
+p <- ggplot(data = flights, mapping = aes(x = factor(carrier,levels = distancebycarrier2$carrier), y = distance, fill = factor(season)))
+p + geom_col() + theme(plot.title = element_text(hjust = 0.5), panel.background = element_rect(fill = "#FFBC1717")) + labs(title = "航空公司季度总距离图")
+```
+
+
+### (3) 航空公司比例饼图
+```{r}
+flights %>% 
+  group_by(carrier) %>% 
+  summarise(total_n=n()) %>% 
+  arrange(desc(total_n)) -> airlinecount
+airlinecount %>%
+  filter(total_n < 10000) %>%
+  summarise(carrier = "other",total_n=sum(total_n)) -> tmp_other
+airlinecount %>%
+  filter(total_n > 10000) %>%
+  union(tmp_other) -> mergedata
+
+pie(mergedata$total_n,labels=mergedata$carrier, main = "航空公司比例饼状图", col=rainbow(10))
+```
+
+### (4) 散点图 + 平滑线
+```{r}
+p <- ggplot(data=flights, mapping = aes(x = distance,y = air_time))
+p + geom_point(shape = 1, alpha = 0.1, color = "skyblue") + stat_bin_hex(bins = 30) + geom_smooth(method = lm, color ="green") + theme(plot.title = element_text(hjust = 0.5), panel.background = element_rect(fill = "#FFBC1717")) + labs(title = "距离飞行时间散点图与平滑线")
+```
+
+### (5) 分面散点图
+```{r}
+p + geom_point(shape = 2, alpha=0.1)+stat_bin_hex(bins = 30)+ stat_smooth(method=lm, color = "green") + facet_grid(season ~ carrier) + theme(plot.title = element_text(hjust = 0.5), panel.background = element_rect(fill = "#FFBC1717")) + labs(title = "季度与航空公司分面散点图")
+```
+
+### (6) 散点图矩阵
+```{r}
+#pairs.panels(flights[c("distance","air_time","dep_delay","arr_delay")])
+ggpairs(data = flights, columns=c("distance","air_time","dep_delay","arr_delay"), main = "散点图矩阵", col=rainbow(16))
+```
+
+## 4
+### (1) UA公司日历图绘制
+```{r}
+Sys.setlocale(locale = "C")
+
+flights %>% mutate(date=as.Date(str_c(year,month,day,sep="-")))  %>% filter(arr_time > 1000 | arr_time < 1200) %>% filter(carrier=="UA") %>% group_by(date)%>% summarise(n=n()) -> UA
+calendarPlot(UA, pollutant="n", cols = c("steelblue","green", "yellow",  "red"), main = "UA公司10-12点到达航班数量")
+```
+
+### (2) 延误时间折线图
+#### 起飞延误
+```{r}
+flights %>%
+  group_by(month) %>%
+  summarise(avg = mean(dep_delay, na.rm = TRUE)) -> departuredelay
+departuredelay
+```
+
+#### 到达延误
+```{r}
+flights %>%
+  group_by(month) %>%
+  summarise(avg = mean(arr_delay, na.rm = TRUE)) -> arrivedelay
+arrivedelay
+```
+
+## 5
+### (1) 可疑速度查看
+#### 箱线图
+```{r}
+flights <- flights %>%
+    mutate(speed = distance / air_time)
+seasonalplot <- ggplot(data = flights, mapping = aes(x = as.factor(dest), y = speed), fill = Attribute)
+seasonalplot + geom_boxplot(width = 0.5, position = position_dodge(0.9), color = "skyblue") + labs(title = "速度对比图", x= "目的地") + theme(plot.title=element_text(hjust=0.5),panel.background = element_rect(fill = "#FFBC1717"))
+```
+#### 每小时超过600km
+```{r}
+Abnormal1 = flights %>% filter(speed >= 10)
+#Abnormal1 <- Abnormal1 %>% select(dest, speed)
+Abnormal1  %>% filter(Valid = TRUE) %>% group_by(dest) %>% summarise(n())
+```
+说明BOS和DCA作为目的地飞机航班速度容易快的可疑
+
+#### 另一种异常判定方法
+```{r}
+flights %>% summarise(variance = var(speed, na.rm = TRUE)) -> variance
+flights %>% summarise(ave = mean(speed, na.rm = TRUE)) -> average
+variance = as.numeric(variance)
+average = as.numeric(average)
+Abnormal2 = flights %>% filter(speed >= (average + 3 * sqrt(variance)))
+Abnormal2
+```
+
+是有些航班快的可疑
+
+### (2) 相关性判断
+```{r}
+flights %>%  drop_na(distance) %>% drop_na(arr_delay) %>% group_by(dest) %>% summarise(ave_dis = mean(distance),ave_time=mean(arr_delay)) -> aver
+p <- ggplot(data = aver, mapping = aes(ave_time, ave_dis, color = dest))
+p + geom_point(size = 2.0, shape = 16)
+```
+```{r}
+ggpairs(data = aver, columns=c("ave_dis","ave_time"))
+```
+
+
+### (3) 取消航班与平均延误时间的关系
+#### 每日取消航班
+```{r}
+flights <- flights %>% mutate(date=as.Date(str_c(year,month,day,sep="-")))
+cancel <- flights %>% group_by(date) %>% summarise(cancelcount = sum(is.na(dep_time)) )
+cancel
+```
+
+#### 每日平均延误时间
+```{r}
+delaytime <- flights %>% group_by(date) %>% summarise(delaytime = mean(arr_delay, na.rm = TRUE))
+delaytime
+```
+
+#### 相关性
+```{r}
+m <- merge(cancel, delaytime, by.x = "date", by.y = "date")
+pairs.panels(m[c("cancelcount","delaytime")])
+```
+存在一定的正相关性
+
+### (4) 延误问题判断
+
+```{r}
+delay <- flights %>%  group_by(carrier, dest) %>% summarise(n())
+delay
+```
+
+#### 散点图
+```{r}
+p <- ggplot(data = flights, mapping = aes(arr_delay, carrier, color = dest))
+p + geom_point(size = 2.0, shape = 16)
+```
+
+### (5) 搭乘飞机时间选择
+
+```{r}
+
+flights %>% group_by(sched_dep_time) %>% summarise(m = mean(arr_delay)) -> delaybytime
+p <- ggplot(data = delaybytime, mapping = aes(x=sched_dep_time, y = m))
+p + geom_line(stat="identity",color="skyblue") +  labs(title = "延误时间折线图") + theme(plot.title=element_text(hjust=0.5),panel.background = element_rect(fill = "#FFBC1717"))
+```
+选择早晨和中午坐飞机
