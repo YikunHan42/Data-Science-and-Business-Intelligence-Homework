@@ -1,6 +1,6 @@
 ---
 title: "Homework2"
-author: "韩颐堃"
+author: "YikunHan42"
 output: pdf_document
 date: '2022-04-17'
 ---
