@@ -1,0 +1,283 @@
+---
+title: "Homework3"
+author: 
+  - YikunHan42
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+always_allow_html: yes
+---
+
+# 导入第三方库
+```{r}
+library(mlr)
+library(ISLR) 
+library(ggplot2) 
+library(reshape2) 
+library(plyr) 
+library(dplyr) 
+library(class)
+library(tidyverse)
+library(plotly)
+```
+
+# 读入和清洗数据
+```{r}
+data <- read.csv("D://Study/DSBI/Task3/data.csv")
+data[!complete.cases(data),]
+# 确认数据是否有缺失值
+```
+# 探索性数据分析
+```{r}
+# 诊断结果作为分类依据，其他分别作为x,y坐标进行尝试探索
+p1 <- ggplot(data,aes(color = diagnose))
+p1 + geom_point(aes(x = index1,y = index2))
+p1 + geom_point(aes(x = index1,y = index3))
+p1 + geom_point(aes(x = index2,y = index3))
+```
+
+```{r}
+str(data)
+summary(data)
+View(data)
+# 
+p1 <- plot_ly(data, x = data[, 2], y =data[, 3], z = data[, 4], 
+             color = ~data$diagnose,
+             marker = list(size = 3)) %>% add_markers()
+p1
+```
+
+# KNN
+## 模型构建
+```{r}
+# 创建训练任务-task
+task <- makeClassifTask(data = data, target = "diagnose")
+# 选择学习算法-learner
+learner<- makeLearner("classif.knn", par.vals=list("k" = 5))
+# 训练模型-train
+model <- train(learner,task)
+```
+
+## 预测与评估
+```{r}
+newdata <- data
+pred <- predict(model, newdata = newdata)
+pred
+```
+```{r}
+calculateConfusionMatrix(pred)  # 计算混淆矩阵
+performance(pred, measures=list(mmce,acc))
+```
+
+## 调参
+### 留出法(Holdout CV)
+```{R}
+cv.holdout <- makeResampleDesc(method="Holdout",
+                               split=0.7,
+                               stratify=T)
+# 0.7分割比例
+resa.holdout <- resample(learner = learner,
+                         task = task,
+                         resampling=cv.holdout,
+                         measures=list(mmce,acc))
+resa.holdout$aggr
+```
+### K折法(k-Fold CV)
+```{R}
+cv.10fold <- makeResampleDesc(method="CV",iters = 10,
+                              stratify = T)
+# 10折
+resa.10fold <- resample(learner = learner,
+                        task = task,
+                        cv.10fold,list(mmce,acc))
+resa.10fold$aggr
+```
+
+另一种实现，并非传统mlr实现
+
+```{r}
+set.seed(1)
+index = round(nrow(data) * 0.2,digits = 0) # 82开训练集和测试集
+test.indices = sample(1:nrow(data), index)
+data.train=data[-test.indices,] # 切分训练集测试集
+data.test=data[test.indices,] 
+YTrain = data.train$diagnose # 自变量因变量指定
+XTrain = data.train %>% select(-diagnose)
+YTest = data.test$diagnose
+XTest = data.test %>% select(-diagnose)
+```
+
+```{r}
+calc_error_rate <- function(predicted.value, true.value){
+ return(mean(true.value!=predicted.value)) # 定义错误函数
+}
+```
+
+```{r}
+nfold = 10 # 10折，与之前的实现保持一致
+set.seed(1)
+folds = seq.int(nrow(data.train)) %>% cut(breaks = nfold, labels=FALSE) %>% sample
+do.chunk <- function(chunkid, folddef, Xdat, Ydat, k){ 
+     train = (folddef!=chunkid)
+Xtr = Xdat[train,] # 训练集
+Ytr = Ydat[train]
+Xvl = Xdat[!train,] # 测试集
+Yvl = Ydat[!train]
+predYtr = knn(train = Xtr, test = Xtr, cl = Ytr, k = k) # 预测训练集标签
+predYvl = knn(train = Xtr, test = Xvl, cl = Ytr, k = k) # 预测测试集标签
+data.frame(fold =chunkid, train.error = calc_error_rate(predYtr, Ytr),# k折，每折训练误差
+ val.error = calc_error_rate(predYvl, Yvl))} # 每折测试误差
+error.folds=NULL # 存储validation error
+kvec = c(1, seq(10, 50, length.out=5)) # 创建间隔为10的序列
+set.seed(1)
+for (j in kvec){
+ tmp = ldply(1:nfold, do.chunk, folddef=folds, Xdat=XTrain, Ydat=YTrain, k=j) # 对每折应用do
+ tmp$neighbors = j 
+ error.folds = rbind(error.folds, tmp) # 组合结果 
+ }
+# 将宽数据变成长数据
+errors = melt(error.folds, id.vars=c("fold","neighbors"), value.name= "error")
+```
+
+```{r}
+val.error.means = errors %>% # 选中所有行
+    filter(variable== "val.error" ) %>% # 分组
+    group_by(neighbors, variable) %>% # 计算CV error
+    summarise_each(funs(mean), error) %>%
+    ungroup() %>% 
+    filter(error==min(error))
+# 最佳近邻个数
+numneighbor = max(val.error.means$neighbors)
+```
+
+```{r}
+set.seed(20)
+pred.YTtrain = knn(train = XTrain, test = XTrain, cl = YTrain, k = 20)
+knn_traing_error <- calc_error_rate(predicted.value=pred.YTtrain, true.value=YTrain)
+knn_traing_error # 训练误差
+```
+
+```{r}
+data <- data[complete.cases(data[,0:3]),]
+set.seed(20)
+pred.YTest = knn(train=XTrain, test=XTest, cl=YTrain, k=20)
+knn_test_error <- calc_error_rate(predicted.value=pred.YTest, true.value=YTest)
+knn_test_error # 测试误差 
+```
+
+```{r}
+conf.matrix = table(predicted=pred.YTest, true=YTest)
+conf.matrix # 混淆矩阵
+```
+
+```{r}
+sum(diag(conf.matrix)/sum(conf.matrix)) # 正确率
+```
+
+```{r}
+# Test error rate
+1 - sum(diag(conf.matrix)/sum(conf.matrix))
+```
+
+```{r}
+#绘制ROC曲线并计算AUC值
+library(pROC)
+knn_roc <- roc(data.test$diagnose,as.numeric(pred.YTest))
+plot(knn_roc, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),grid.col=c("green", "red"), max.auc.polygon=TRUE,auc.polygon.col="skyblue", print.thres=TRUE,main='k-fold knn算法ROC曲线')
+```
+
+### 重复k折法(Repeat k-Fold CV)
+```{r}
+cvRepKFold <-makeResampleDesc(method="RepCV",folds=12,reps=2,stratify=T)
+resa.rep12fold<-resample(learner,task,cvRepKFold,measures=list(mmce,acc))
+ calculateConfusionMatrix(resa.rep12fold$pred, relative=T)
+```
+
+### 留一法(Leave-One-Out CV)
+```{r}
+cv.loo <- makeResampleDesc(method="LOO")
+resa.loo <- resample(learner,
+                     task,
+                     cv.loo,
+                     list(mmce,acc))
+resa.loo$aggr
+```
+
+## 不同种方法的混淆矩阵
+```{r}
+calculateConfusionMatrix(pred=resa.holdout$pred,
+                         relative=T)
+
+calculateConfusionMatrix(pred=resa.10fold$pred,
+                         relative=T)
+
+calculateConfusionMatrix(pred=resa.rep12fold$pred,
+                         relative=T)
+
+calculateConfusionMatrix(pred=resa.loo$pred,
+                         relative=T)
+```
+得到结果为holdout方法最好，后面选用此方法作为baseline进行优化
+
+## 提升模型性能
+```{r}
+getParamSet("classif.knn")
+tuneHyperParmSet <- makeParamSet(makeDiscreteParam("k",1:20))
+gridSearch<-makeTuneControlGrid()
+tunedHyperParam<-tuneParams(learner, task,
+                            resampling=cv.holdout, # 交叉验证
+                            par.set=tuneHyperParmSet, 
+                            control=gridSearch) # 调参
+tunedHyperParam$x # 通过$x 获取调参后的超参值 
+```
+k = 7最好
+
+## 可视化调参过程
+```{r}
+tuningData <- generateHyperParsEffectData(tunedHyperParam)
+p <- ggplot(tuningData$data, aes(x=k, y=mmce.test.mean)) # 指定x,y坐标
+p + geom_line(color="skyblue") + labs(title = "可视化调参") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+## 重新训练并预测
+```{r}
+tunedKnn <- setHyperPars(learner, par.vals=tunedHyperParam$x)
+tunedModel <- train(tunedKnn, task) # 训练得到最终模型
+pred1 <- predict(tunedModel, newdata=newdata) # 预测结果 
+calculateConfusionMatrix(pred) 
+```
+
+```{r}
+# 引入control
+search.grid <- makeTuneControlGrid()
+cv.inner <- makeResampleDesc("CV",stratify=T)
+
+cv.outer <- makeResampleDesc("RepCV",
+                             folds=12,
+                             reps=5,
+                             stratify=T)
+
+wrapper.kNN <- makeTuneWrapper(learner="classif.knn",
+                               resampling=cv.inner,
+                               par.set=tuneHyperParmSet,
+                               control=search.grid)
+
+resa.tune.embeded.cv <- resample(learner=wrapper.kNN,
+                                 task,
+                                 resampling=cv.outer,
+                                 measures=list(mmce,acc))
+
+resa.tune.embeded.cv
+```
+
+不难发现，k=6或7时效果最好，与之前得出的结论一致
+
+## 未知数据的预测
+```{r}
+newdataPred <- predict(tunedModel, newdata=data[1:100,])
+newdataPred$data
+calculateConfusionMatrix(newdataPred)
+```
