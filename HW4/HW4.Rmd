@@ -1,0 +1,162 @@
+---
+title: "Homework4"
+author: 
+  - YikunHan42
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+always_allow_html: true
+---
+
+# 导入第三方库
+```{r}
+library(data.table)   
+library(jiebaR)      
+library(wordcloud2)   
+library(tidyverse)
+library(tm) 
+library(e1071)
+```
+
+# 路径设置
+```{r}
+setwd("D:/Study/DSBI/Task4")
+```
+
+# 读入原始数据
+```{r}
+sms.raw <- fread("Chinese_SMS.txt",sep="\t",header=FALSE,encoding="UTF-8")
+
+colnames(sms.raw) <- c("type", "sms") # 添加列名
+str(sms.raw)
+
+sms.raw$type <- factor(sms.raw$type) # type 转换为因子数据
+table(sms.raw$type)
+```
+
+# 分词
+## 新建分词
+```{r}
+jd_file <- scan('Chinese_SMS.txt', sep='\n', what='',encoding = "UTF-8")
+seg <- qseg[jd_file] #使用qseg类型分词
+seg <- seg[nchar(seg)>1] #去除字符长度小于1的词
+seg <- seg[seg != "xx"]
+seg <- seg[seg != "xxx"]
+seg <- seg[seg != "xxxx"]
+seg <- seg[seg != "xxxxxxxxxxx"]
+seg <- table(seg)
+seg <- seg[!grepl('[0-9]+',names(seg))]#过滤数字
+seg <- sort(seg, decreasing = TRUE)[1:50]
+```
+
+## 词频统计
+```{r}
+seg
+```
+
+## 数据选取
+```{r}
+set.seed(2023)
+sample.n <- 10000 # 80万中取1万数据，减少训练时间
+idx <- sample(1:nrow(sms.raw), sample.n)
+sms.sample <- sms.raw[idx, ]
+View(sms.sample)
+```
+
+## 数据清洗
+```{r}
+engine <- worker(stop_word = "stop_words.utf8") # 设置停用词
+engine$bylines <- TRUE
+# 分词；对每个文档，将其分词结果用空格组合成一个字符串
+sms.seg <- sapply(segment(sms.sample$sms, engine), str_c, collapse=" ")
+# 用tm生成sms语料库，并进行清洗
+
+# 自定义清洗函数
+removeAlphabet <- function(x){
+    result <- gsub("[a-zA-Z]+","",x)   # 把字符串x中所有字母均替换为空字符串""
+    return(result)
+}
+
+removeSingle <- function(x){
+  ifelse(nchar(x)>1,x,'')
+  return (x)
+}
+```
+
+```{r}
+sms.corpus <-
+  Corpus(VectorSource(sms.seg)) %>% 
+  tm_map(removePunctuation) %>% 
+  tm_map(removeNumbers) %>% 
+  tm_map(removeAlphabet)
+```
+
+## 创建单词矩阵
+```{r}
+sms.dtm <- DocumentTermMatrix(sms.corpus)
+
+inspect(sms.dtm)
+```
+
+## 词云制作
+```{r}
+top.n <- 50
+sms.tdm.df <- as.data.frame(t(as.matrix(sms.dtm)))
+sms.words.freq <- data.frame(word=rownames(sms.tdm.df),
+                             freq=apply(sms.tdm.df,1,sum))
+
+sms.words.freq.top.n <- sms.words.freq %>% 
+  arrange(desc(freq)) %>% 
+  slice(1:top.n)
+sms.words.freq.top.n
+
+wordcloud2(sms.words.freq.top.n,
+           fontFamily="微软雅黑",color="random-light",backgroundColor = "grey")
+```
+
+# 朴素贝叶斯
+## 数据集切分
+```{r}
+train_row <- sample(1:length(sms.sample$type),size = floor((length(sms.sample$type) *0.7)))
+sms_words_train <- sms.sample[train_row,]
+sms_words_test <-  sms.sample[-train_row,]
+sms_dtm_train <- sms.dtm[train_row,]
+sms_dtm_test <- sms.dtm[-train_row,]
+sms_corpus_train <- sms.corpus[train_row]
+sms_corpus_test <- sms.corpus[-train_row]
+```
+
+## 选取词频较高的词汇
+```{r}
+sms_words_dict <- findFreqTerms(sms_dtm_train,5)
+sms_corpus_freq_train <- DocumentTermMatrix(sms_corpus_train,list(dictionry = sms_words_dict))
+sms_corpus_freq_test <- DocumentTermMatrix(sms_corpus_test,list(dictionry = sms_words_dict))
+```
+
+## 词汇标识
+```{r}
+# 将训练集和测试集中的词用0, 1分别标记在文本中未出现、出现某一词汇
+memory.limit(1000000)
+
+convert_counts <- function(x){
+  x <- ifelse(as.numeric(as.character(x))>0,1,0)
+  x <- factor(x,levels = c(0,1),labels = c("No","Yes"))
+  return(x)
+}
+sms_corpus_convert_train <- apply(sms_corpus_freq_train, MARGIN = 2, convert_counts)
+sms_corpus_convert_test <- apply(sms_corpus_freq_test, MARGIN = 2, convert_counts)
+```
+
+## 分类与测试
+```{r}
+sms_naiveBayes <- naiveBayes(sms_corpus_convert_train,sms_words_train$type,laplace = 1)
+sms_naiveBayes
+```
+
+```{r}
+sms_predict  <- predict(sms_naiveBayes,sms_corpus_convert_test)
+sms_predict
+```
