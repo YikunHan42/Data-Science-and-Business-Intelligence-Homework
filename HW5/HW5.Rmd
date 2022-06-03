@@ -1,0 +1,202 @@
+---
+title: "Homework5"
+author: 
+  - YikunHan42
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+always_allow_html: true
+---
+
+# 数据探索
+## 导入相关第三方库
+```{r}
+library(tidyverse)
+library(mlr)
+library(rpart)
+library(randomForest)
+library(parallel)
+library(parallelMap)
+library(ggplot2)
+library(GGally)
+library(scales)
+library(dplyr)
+library(corrplot)
+library(PerformanceAnalytics)
+library(knitr)
+library(memisc)
+```
+
+## 导入数据
+```{r}
+file <- "D:/Study/DSBI/Task5/credit.csv"
+data.credit <- read.csv(file, stringsAsFactors = T)
+str(data.credit)
+```
+
+## 总体概览
+```{r}
+dim(data.credit)
+```
+```{r}
+summary(data.credit)
+```
+
+# 数据准备
+## 数据预处理
+```{r}
+is.na(data.credit)
+```
+
+```{r}
+n<-sum(is.na(data.credit))
+n
+# 没有缺失值，无需填充
+```
+
+# 数据可视化
+```{r}
+qplot(x = default, data = data.credit, ylab = 'count') #绘制default的柱形图
+```
+
+```{r}
+creat_plot=function(name,binwidth){
+  return(ggplot(aes_string(x = name), data = data.credit, ylab = 'default') + geom_histogram(binwidth = binwidth))   #构建绘图函数
+}
+
+creat_plot('percent_of_income', 1) 
+```
+
+```{r}
+data1 = subset(data.credit, data.credit$default == 'no')
+data2 = subset(data.credit, data.credit$default == 'yes')
+summary(data1$percent_of_income)
+# 限定default结果的探索
+```
+```{r}
+summary(data2$percent_of_income)
+```
+
+```{r}
+boxplot(default ~ months_loan_duration,data = data.credit,xlab='months_loan_duration',ylab='default')
+# 箱线图
+```
+
+```{r}
+ggplot(aes(x=months_loan_duration,y=default),data=data.credit)+
+  geom_jitter()+
+    labs(title = 'scatterplot between months_loan_duration and default')+
+      theme(plot.title=element_text(hjust=0.5))
+# 双变量分析
+```
+
+```{r}
+m1=lm(I(months_loan_duration)~I(default),data=data.credit)
+summary(m1)
+```
+
+```{r}
+data.credit$default=factor(data.credit$default)
+ggplot(aes(x=months_loan_duration,y=percent_of_income
+,color=default),data=data.credit)+
+  geom_jitter()+
+  theme_dark()+
+  scale_color_brewer(type = 'div')+
+  labs(x='months_loan_duration',y='density (percent_of_income)',
+  title = 'scatterplot between months_loan_duration and percent_of_income with colored default levels')
+# 多变量分析
+```
+```{r}
+lm1=lm(I(default)~I(months_loan_duration),data=data.credit)
+lm2=update(lm1,~.+percent_of_income)
+lm3=update(lm2,~.+years_at_residence)
+mtable(lm1, lm2, lm3)
+```
+
+# 决策树模型
+## 训练
+```{r}
+task <- makeClassifTask(data = data.credit, target = "default")
+treeLearner <- makeLearner("classif.rpart"); getParamSet(treeLearner)
+treeParamSpace <- makeParamSet( makeIntegerParam("minsplit", lower = 5, upper = 20),
+                                makeIntegerParam("minbucket", lower = 3, upper = 10),
+                                makeNumericParam("cp", lower = 0.01, upper = 0.1),
+                                makeIntegerParam("maxdepth", lower = 3, upper = 10))
+randSearch <- makeTuneControlRandom(maxit = 200)
+```
+
+## 交叉验证
+```{r}
+cvForTuning <- makeResampleDesc("CV", iters = 5)
+```
+
+## 调参
+```{r}
+library(parallel); library(parallelMap)
+parallelStartSocket(cpus = detectCores())
+tunedTreePars <- tuneParams(treeLearner, task = task,
+                            resampling = cvForTuning,
+                            par.set = treeParamSpace, control = randSearch)
+parallelStop()
+tunedTreePars
+```
+
+```{r}
+tunedTree <- setHyperPars(treeLearner, par.vals = tunedTreePars$x)
+tunedTreeModel <- train(tunedTree, task)
+library(rpart.plot)
+treeModelData <- getLearnerModel(tunedTreeModel)
+rpart.plot(treeModelData, roundint = FALSE, box.palette = "BuBn", type = 5)
+```
+
+## 预测
+```{r}
+data.new <- data.credit[6,-17]
+pred.on.new.data <- predict(tunedTreeModel,
+                           newdata=data.new)
+pred.on.new.data
+```
+
+# 随机森林模型
+## 训练
+```{r}
+task <- makeClassifTask(data = data.credit, target = "default")
+learnerForest <- makeLearner("classif.randomForest")
+forestParamSpace <- makeParamSet( makeIntegerParam("ntree", lower = 2000, upper = 2000),
+                                  makeIntegerParam("mtry", lower = 6, upper = 16),
+                                  makeIntegerParam("nodesize", lower = 3, upper = 10),    # lower = 1, upper = 5
+                                  makeIntegerParam("maxnodes", lower = 5, upper = 20))
+randSearch <- makeTuneControlRandom(maxit = 200)
+```
+
+## 交叉验证
+```{r}
+cvForTuning <- makeResampleDesc("CV", iters = 5)
+```
+
+## 调参
+```{r}
+parallelStartSocket(cpus = detectCores())
+tunedForestPars <- tuneParams( learnerForest, task = task,
+resampling = cvForTuning,
+par.set = forestParamSpace, control = randSearch)
+parallelStop()
+tunedForestPars
+
+tunedForest <- setHyperPars(learnerForest, par.vals = tunedForestPars$x)
+tunedForestModel <- train(tunedForest, task)
+```
+
+## 预测
+```{r}
+data.new2 <- data.credit[6,-17]
+pred.on.new.data2 <- predict(tunedForestModel,
+                             newdata=data.new2)
+pred.on.new.data2
+```
+
+通过mmce.test.mean等指标比较，随机森林benchmark略优于决策树。
+
