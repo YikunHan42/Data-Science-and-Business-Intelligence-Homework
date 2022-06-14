@@ -1,0 +1,260 @@
+---
+title: "Homework6"
+author: 
+  - YikunHan42
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+always_allow_html: true
+---
+
+# 导入第三方库
+```{r}
+library(mlr)
+library(GGally)
+library(tidyverse)
+library(dplyr)
+library(clusterSim)
+library(clue)
+library(stringi)
+library(plotly)
+library(corrplot)
+library(ggfortify)
+```
+
+# 数据预处理
+```{r}
+data<-read.csv('D:/Study/DSBI/Task6/dangdang6.csv', fileEncoding = "GB2312")
+data %>% drop_na() -> data
+```
+
+# 探索性数据分析
+## 展示
+```{r}
+str(data)
+```
+
+```{r}
+summary(data)
+```
+
+## 可视化
+```{r}
+explor_book_category<-group_by(data,type)%>%
+    summarise(count=n(),
+              percent=n()/nrow(data)*100)%>%
+  arrange(desc(count))
+
+plot_ly(data<-explor_book_category,
+        labels=~type,
+        values=~count,
+        name="图书类别构成"
+        )%>%add_pie(hole=0.5)
+```
+
+```{r}
+#自定义直方图
+ExplorHistogramplot<-function(data,titleX=NULL,titleY=NULL){
+  plot_ly(x=~data,
+          type="histogram",
+          marker=list(color="rgb(158,202,225)",
+          line=list(color="rgb(8,48,107)",width=1.5)),
+          histnorm="count",
+          name="直方图")%>%
+          layout(xaxis=list(title=titleX),
+                 yaxis=list(title=titleY))
+}
+
+#自定义箱线图
+ExplorBoxPlot<-function(data,titleX=NULL,titleY=NULL){
+  plot_ly(x=~data,
+          type="box",
+          name="箱线图")%>%
+    layout(xaxis=list(title=titleX),
+           yaxis=list(title=titleY))
+}
+```
+
+```{r}
+# 绘制现价组合图
+data<-read.csv('D:/Study/DSBI/Task6/dangdang6.csv', fileEncoding = "GB2312")
+data %>% drop_na() -> data
+p1<-ExplorHistogramplot(data=data$current_price,titleY="频次")
+p2<-ExplorBoxPlot(data=data$current_price,titleY="",titleX="图书现价")
+subplot(p1,p2,nrows=2,widths=1,heights=c(0.8,0.2),margin=0,
+        shareX=T,shareY=F,titleX=T,titleY=F)
+```
+
+```{r}
+#绘制原价组合图
+p3<-ExplorHistogramplot(data=data$origin_price,titleY="频次")
+p4<-ExplorBoxPlot(data=data$origin_price,titleY="",titleX="图书原价")
+subplot(p3,p4,nrows=2,widths=1,heights=c(0.8,0.2),margin=0,
+        shareX=T,shareY=F,titleX=T,titleY=F)
+```
+
+```{r}
+# 绘制折扣组合图
+p5<-ExplorHistogramplot(data=data$discount,titleY="频次")
+p6<-ExplorBoxPlot(data=data$discount,titleY="",titleX="图书折扣")
+subplot(p5,p6,nrows=2,widths=1,heights=c(0.8,0.2),margin=0,
+        shareX=T,shareY=F,titleX=T,titleY=F)
+```
+
+```{r}
+corrplot(cor(data[,2:6]),
+         method="number",
+         type="upper",tl.srt=45)
+```
+
+```{r}
+ggpairs(data[,2:6],
+        upper=list(continuous="density"),
+        lower=list(continuous=wrap("points",size=0.5)),
+        diag=list(continuous="densityDiag")) + theme_bw()
+```
+
+# k-means聚类
+## 标准化特征变量
+```{r}
+data_df = data[2:6]
+data.scaled.matrix <- scale(data_df); class(data.scaled.matrix)
+data.scaled <- as.data.frame(data.scaled.matrix); class(data.scaled)
+```
+
+## 创建task和learner
+```{r}
+task <- makeClusterTask(data=data.scaled)
+learner <- makeLearner("cluster.kmeans",
+                       par.vals=list(iter.max=100,nstart=10))
+```
+
+## 交叉验证和调参
+```{r}
+set.seed(2022)
+param.set <- makeParamSet(makeDiscreteParam("centers",values=8:10),
+                          makeDiscreteParam("algorithm",c("Lloyd")))
+search.grid <- makeTuneControlGrid() 
+cv.6fold <- makeResampleDesc("CV",iters=6)
+params.tuned <- tuneParams(learner=learner,
+                           task=task,
+                           resampling=cv.6fold,
+                           par.set=param.set,
+                           control=search.grid,
+                           measures=list(db,G1,G2))
+params.tuned$x
+```
+
+```{r}
+tuning.data <- generateHyperParsEffectData(params.tuned)
+knitr::kable(tuning.data$data)
+```
+
+```{r}
+gathered.tuning.data <- gather(tuning.data$data,
+                               key="Metric",
+                               value="Value",
+                               c(-centers,-iteration,-algorithm))
+p <- ggplot(gathered.tuning.data,
+            aes(centers,Value,col=algorithm))
+p+facet_wrap(~Metric,scales="free_y")+geom_line()+geom_point()
+```
+```{r}
+learner.tuned <- setHyperPars(learner,par.vals=params.tuned$x)
+model.tuned <- train(learner.tuned,task)
+result <- getLearnerModel(model.tuned)
+```
+
+```{r}
+data_df %>%
+  mutate(cluster=as.factor(result$cluster)) -> result.data.df
+result.data.df
+
+chart.kmeans <- ggpairs(result.data.df[c(1,2,3,6)], aes(color=cluster),
+                        upper=list(continuous="density")) + theme_bw()
+chart.kmeans
+```
+
+```{r}
+chart.kmeans2 <- ggpairs(result.data.df[c(4,6)], aes(color=cluster),
+                        upper=list(continuous="density")) + theme_bw()
+chart.kmeans2
+```
+
+```{r}
+chart.kmeans3 <- ggpairs(result.data.df[c(5,6)], aes(color=cluster),
+                        upper=list(continuous="density")) + theme_bw()
+chart.kmeans3
+```
+
+# 聚类结果分析
+```{r}
+book_cluster<-kmeans(x=data.scaled,centers=10,iter.max=100,nstart=30)
+autoplot(book_cluster,data<-data.scaled,label=F,lable.size=2,frame=TRUE)+theme_bw()
+```
+
+```{r}
+#添加聚类标签
+data_cluster<-data.frame(data.scaled,
+                         book_cluster=book_cluster$cluster,
+                         stringsAsFactors=F)
+                         
+Ftest<-function(x,group){
+  data<-data.frame(x,group)
+  rst<-c(tapply(data$x,data$group,mean),c(unlist(oneway.test(x~group)))[c(1:4)])
+  rst<-round(as.numeric(rst),10)
+  names(rst)<-c("类别1均值","类别2均值","类别3均值","类别4均值","类别5均值","类别6均值","类别7均值","类别8均值","类别9均值","类别10均值","F值","分子自由度","分母自由度","P值")
+  return(rst)
+}
+
+test_cluster<-t(apply(data_cluster,2,Ftest,group=data_cluster$book_cluster))
+test_cluster[1:nrow(test_cluster)-1,]
+```
+
+```{r}
+data$book_cluster<-book_cluster$cluster
+data$book_cluster<-factor(data$book_cluster,
+                          levels=c(1,2,3,4,5,6,7,8,9,10),
+                          labels=c("类别1","类别2","类别3","类别4","类别5","类别6","类别7","类别8","类别9","类别10"),
+                          ordered=T)
+
+CompareBoxPlot<-function(x,group,titleX=NULL,titleY=NULL){
+  data<-data.frame(x,group)
+  plot_ly(data=data,
+         x=~x,
+         color=~group,
+         type="box",
+         showlegend=FALSE)%>%
+    layout(xaxis=list(title=titleX),
+           yaxis=list(title=titleY))
+}
+
+p7<-CompareBoxPlot(x=data$current_price,
+                   group=data$book_cluster,
+                   titleX="图书现价")
+p8<-CompareBoxPlot(x=data$origin_price,
+                   group=data$book_cluster,
+                   titleX="图书原价")
+p9<-CompareBoxPlot(x=data$discount,
+                   group=data$book_cluster,
+                   titleX="图书折扣")
+subplot(p7,p8,p9,nrows=1,widths=c(0.33,0.33,0.33),
+        heights=1,margin=0.05,shareX=F,shareY=F,
+        titleX=T,titleY=T)
+```
+
+```{r}
+p10<-CompareBoxPlot(x=data$book_comments,
+                   group=data$book_cluster,
+                   titleX="评论次数")
+p11<-CompareBoxPlot(x=data$book_score_count,
+                   group=data$book_cluster,
+                   titleX="五星推荐次数")
+subplot(p10,p11,nrows=1,widths=c(0.5,0.5),
+        heights=1,margin=0.05,shareX=F,shareY=F,
+        titleX=T,titleY=T)
+```
+
