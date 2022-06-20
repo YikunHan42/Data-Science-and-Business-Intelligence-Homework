@@ -1,0 +1,289 @@
+---
+title: "Homework6"
+author: 
+  - YikunHan42
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+always_allow_html: true
+---
+
+# 导入第三方库
+```{r}
+library(tidyverse)
+library(mlr)
+library(rpart)
+library(randomForest)
+library(parallel)
+library(parallelMap)
+library(car)
+library(GGally)
+```
+
+# 读入数据
+```{r}
+file <- "D:/Study/DSBI/Task7/solubility_data.csv"
+solubility_data <- read.csv(file)
+```
+
+# 探索性数据分析
+```{r}
+summary(solubility_data)
+```
+
+```{r}
+str(solubility_data)
+```
+```{r}
+ncol(solubility_data)
+```
+
+# 数据可视化
+## 箱线图+小提琴图
+```{r}
+p <- ggplot(data = solubility_data, mapping = aes(x = 0, y = Solubility), fill = attributes)
+p + geom_boxplot(width = 1,position = position_dodge(0.9), color = " green") + geom_violin(size = 0.01,alpha = 0.5,color = "blue") + labs(title = "叠加图", x= "width") + theme(plot.title=element_text(hjust=0.5), panel.background = element_rect(fill = "#FFBC1717"))
+```
+
+## 散点图
+```{r}
+ggplot(data = solubility_data, aes(x = MolWeight, y = Solubility)) +
+  geom_point()+
+  geom_point(shape = 17)
+```
+```{r}
+ggplot(data = solubility_data, aes(x = NumRings, y = Solubility)) +
+  geom_point()+
+  geom_point(size = 3, color = "red")
+```
+
+## 柱状图
+```{r}
+ggplot(data = solubility_data, aes(x = Solubility)) +
+  geom_histogram()
+```
+
+## 散点图矩阵
+```{r}
+ggpairs(solubility_data[,220:228], showStrips = F) 
+```
+
+## 核密度
+```{r}
+p <- ggplot(data=solubility_data,aes(x=Solubility)) 
+p + geom_histogram(aes(y=..density..),fill="skyblue",color="black")+
+  geom_density(color="red")
+```
+
+# 回归分析
+## 定义回归任务
+```{r}
+## define regression task
+task <- makeRegrTask(data = solubility_data, target = "Solubility")
+```
+
+## 决策树
+```{r}
+## Decision Tree -----
+treeLearner <- makeLearner("regr.rpart")
+treeParamSpace <- makeParamSet( makeIntegerParam("minsplit", lower = 5, upper = 20),
+                                makeIntegerParam("minbucket", lower = 3, upper = 10),
+                                makeNumericParam("cp", lower = 0.01, upper = 0.1),
+                                makeIntegerParam("maxdepth", lower = 3, upper = 10))
+randSearch <- makeTuneControlRandom(maxit = 100)
+cvForTuning <- makeResampleDesc("CV", iters = 5)
+library(parallel); library(parallelMap)
+parallelStartSocket(cpus = detectCores())
+tunedTreePars <- tuneParams(treeLearner, task = task,
+                            resampling = cvForTuning,
+                            par.set = treeParamSpace, control = randSearch)
+parallelStop()
+tunedTreePars
+
+tunedTree <- setHyperPars(treeLearner, par.vals = tunedTreePars$x)
+tunedTreeModel <- train(tunedTree, task)
+library(rpart.plot)
+treeModelData <- getLearnerModel(tunedTreeModel)
+rpart.plot(treeModelData, roundint = FALSE, box.palette = "BuBn", type = 5)
+```
+
+## 随机森林
+```{r}
+## Random Foreast -----
+rfLearner <- makeLearner("regr.randomForest")
+rfParamSpace <- makeParamSet( makeIntegerParam("ntree", lower = 100, upper = 100),
+                                  makeIntegerParam("mtry", lower = 6, upper = 10),
+                                  makeIntegerParam("nodesize", lower = 3, upper = 10),    # lower = 1, upper = 5
+                                  makeIntegerParam("maxnodes", lower = 5, upper = 20))
+randSearch <- makeTuneControlRandom(maxit = 100)
+cvForTuning <- makeResampleDesc("CV", iters = 5)
+parallelStartSocket(cpus = detectCores())
+tunedRFPars <- tuneParams( rfLearner, task = task,
+                               resampling = cvForTuning,
+                               par.set = rfParamSpace, control = randSearch)
+parallelStop()
+tunedRFPars
+
+tunedRF <- setHyperPars(rfLearner, par.vals = tunedRFPars$x)
+tunedRFModel <- train(tunedRF, task)
+
+plot(getLearnerModel(tunedRFModel))
+```
+
+## XGBoost
+```{r}
+## XGBoost -----
+xgbLearner <- makeLearner("regr.xgboost")
+getParamSet(xgbLearner)
+xgbParamSpace <- makeParamSet( makeNumericParam("eta", lower = 0, upper = 1),
+                               makeNumericParam("gamma", lower = 0, upper = 5),
+                               makeIntegerParam("max_depth", lower = 1, upper = 5),
+                               makeNumericParam("min_child_weight", lower = 1, upper = 10),
+                               makeNumericParam("subsample", lower = 0.5, upper = 1),
+                               makeNumericParam("colsample_bytree", lower = 0.5, upper = 1),
+                               makeIntegerParam("nrounds", lower = 20, upper = 20))
+randSearch <- makeTuneControlRandom(maxit = 100)
+cvForTuning <- makeResampleDesc("CV", iters = 5)
+tunedXgbPars <- tuneParams(xgbLearner, task = task,
+                           resampling = cvForTuning,
+                           par.set = xgbParamSpace, control = randSearch)
+tunedXgbPars
+
+tunedXgb <- setHyperPars(xgbLearner, par.vals = tunedXgbPars$x)
+tunedXgbModel <- train(tunedXgb, task)
+xgbModelData <- getLearnerModel(tunedXgbModel)
+
+ggplot(xgbModelData$evaluation_log,aes(iter,train_rmse)) +
+  geom_point()+geom_line()
+
+#install.packages("DiagrammeR")
+library(DiagrammeR)
+xgboost::xgb.plot.tree(model = xgbModelData, trees = 1:2)
+
+```
+
+## 线性回归
+```{r}
+## Linear Regression-----
+x_train<-solubility_data[1:800,1:228]
+y_train<-solubility_data[1:800,229]
+x_test<-solubility_data[801:951,1:228]
+y_test<-solubility_data[801:951,229]
+x<-cbind(x_train,y_train)
+linear<-lm(y_train~.,data=x)
+model_sum<-summary(linear)
+predict=predict(linear,x_test)
+linear_mse=mean((y_test-predict)^2)
+y_test=as.data.frame(y_test)
+predict=as.data.frame(predict)
+z<-cbind(y_test,predict)
+ggplot(data = z, aes(x = y_test, y = predict)) +
+  geom_point()+
+  geom_point(shape = 17)
+print(linear_mse)
+```
+
+# PCA主成分分析
+```{r}
+rownames(solubility_data) <- paste("sample",1:nrow(solubility_data),sep = "") # 设置样本名 
+head(solubility_data) # 查看数据集前几行
+```
+
+```{r}
+solubility_scale <- scale(solubility_data[,-ncol(solubility_data)]) # 标准化原始数据
+head(solubility_scale)
+```
+
+```{r}
+cor_mat <- cor(solubility_scale) # 计算相关系数矩阵 
+```
+
+```{r}
+rs_mat <- eigen(cor_mat) # 特征分解
+```
+
+```{r}
+val <- rs_mat$values # 提取特征值,即各主成分的方差
+standard_deviation <- sqrt(val) # 换算成标准差
+```
+
+```{r}
+proportion_of_variance <- val/sum(val) # 计算方差贡献率
+```
+
+```{r}
+cumulative_proportion <- cumsum(proportion_of_variance) # 计算累积贡献率
+```
+
+```{r}
+load_mat <- as.matrix(rs_mat$vectors) # 提取特征向量,即载荷矩阵(loadings)
+PC <- solubility_scale %*% load_mat # 计算主成分得分
+colnames(PC) <- paste("PC",1:ncol(PC),sep = "")
+df2 <- as.data.frame(PC) # 转换成数据框，否则直接用于绘图会报错
+head(df2)
+```
+
+```{r}
+# 提取主成分的方差贡献率,生成坐标轴标题
+xlab2 <- paste0("PC1(",round(proportion_of_variance[1]*100,2),"%)")
+ylab2 <- paste0("PC2(",round(proportion_of_variance[2]*100,2),"%)")
+```
+
+```{r}
+# 绘制PCA得分图
+p.pca2 <- ggplot(data = df2,aes(x = PC1,y = PC2,color = solubility_data$Species))+
+  geom_point(size = 3)+
+  theme_bw()+
+  labs(x = xlab2,y = ylab2,color = "Group",title = "Plot of PCA score")+
+  stat_ellipse(aes(fill = solubility_data$Species),
+               type = "norm",geom = "polygon",alpha = 0.2,color = NA)+
+  guides(fill = "none")+
+  theme(plot.title = element_text(hjust = 0.5,size = 15),
+        axis.text = element_text(size = 11),axis.title = element_text(size = 13),
+        legend.text = element_text(size = 11),legend.title = element_text(size = 13),
+        plot.margin = unit(c(0.4,0.4,0.4,0.4),'cm'))
+ggsave(p.pca2,filename = "PCA.pdf")
+```
+
+# 性能比较
+```{r}
+## Benchmark -----
+learnersBenchmark <- list( tunedXgb,
+                            tunedRF,
+                            tunedTree
+                 )
+cvBenchmark <- makeResampleDesc("RepCV", folds=5, reps=5)
+parallelStartSocket(cpus = detectCores())
+resultBenchmark <- benchmark(learnersBenchmark, task, cvBenchmark)
+parallelStop()
+resultBenchmark
+## CV embedded with tuning
+cvTune <- makeResampleDesc("CV",iters=5)  # inner cv (for tuning)
+
+treeWrapper <- makeTuneWrapper(treeLearner,
+                             resampling=cvTune,
+                             par.set=treeParamSpace,
+                             control=randSearch)
+rfWrapper <- makeTuneWrapper(rfLearner,
+                             resampling=cvTune,
+                             par.set=rfParamSpace,
+                             control=randSearch)
+xgbWrapper <- makeTuneWrapper(xgbLearner,
+                              resampling=cvTune,
+                              par.set=xgbParamSpace,
+                              control=randSearch)
+learnersBen <- list(treeWrapper,rfWrapper,xgbWrapper)
+cvBen <- makeResampleDesc("CV",iters=5)  #outer cv
+
+parallelStartSocket(cpus = detectCores())
+resBenchmark <- benchmark(learnersBen,task,cvBen)
+parallelStop()
+print("线性回归的mse是")
+print(linear_mse)
+resBenchmark
+```
+
+经过对比mse，不难发现线性回归的性能是最好的
